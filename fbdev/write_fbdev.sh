@@ -37,3 +37,4 @@ done
 #  }
 #  return res;
 #}
+#intToLittleEndHexString(rgb888ToRgb565(255, 0, 0))
