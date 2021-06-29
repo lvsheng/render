@@ -1,44 +1,27 @@
 #include <stdio.h>
-#include <stdint.h>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/ioctl.h>
-#include <drm/drm.h>
-#include <drm/drm_mode.h>
-
-#include <limits.h>
-#include <linux/input.h>
 #include <stdbool.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h> 
-#include <stdio.h> 
-#include <glob.h>
 
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/ioctl.h>
+
+#include <drm/drm.h>
+#include <drm/drm_mode.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
-#include <libinput.h>
-#include <systemd/sd-event.h>
-#include <EGL/egl.h>
-//#define  EGL_EGLEXT_PROTOTYPES
-#include <EGL/eglext.h>
-#include <GLES2/gl2.h>
-//#define  GL_GLEXT_PROTOTYPES
-#include <GLES2/gl2ext.h>
-
-//#include <modesetting.h>
-//#include <collection.h>
-//#include <keyboard.h>
 
 // see: https://github.com/ardera/flutter-pi/blob/master/src/modesetting.c
 // see also: https://blog.csdn.net/hexiaolong2009/article/details/83721242
+// see also: https://github.com/dvdhrm/docs/tree/master/drm-howto
 int main()
 {
+    int ok;
     drmDevicePtr devices[64];
     int num_devices = drmGetDevices2(0, devices, sizeof(devices)/sizeof(*devices));
-    int ok;
     printf("num_devices:%d\n", num_devices);
 
 	for (int i = 0; i < num_devices; i++) {
@@ -62,6 +45,14 @@ int main()
             perror("[modesetting] Could not open DRM device. open");
             continue;
         }
+
+        //// ## expose all planes (overlay, primary, and cursor) to userspace
+        //// see: https://dri.freedesktop.org/docs/drm/gpu/drm-uapi.html#c.DRM_CLIENT_CAP_UNIVERSAL_PLANES
+        //ok = drmSetClientCap(fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
+        //if (ok < 0) {
+        //    perror("[modesetting] Could not set DRM client universal planes capable. drmSetClientCap");
+        //    continue;
+        //}
 
         // ## get resource
         drmModeRes *resource = drmModeGetResources(fd);
@@ -164,6 +155,12 @@ int main()
         // see: https://github.com/grate-driver/libdrm/blob/master/xf86drmMode.h#L404
         //     Set the mode on a crtc crtcId with the given mode modeId.
         // see: https://manpages.debian.org/jessie/libdrm-dev/drm-kms.7.en.html#Mode-Setting
+        // 注意会有撕裂(无double-buffer)
+        //     double-buffer示例：
+        //       https://blog.csdn.net/hexiaolong2009/article/details/84452020
+        //       https://github.com/dvdhrm/docs/blob/master/drm-howto/modeset-double-buffered.c#L520
+        //     vsync示例：
+        //       https://github.com/dvdhrm/docs/blob/master/drm-howto/modeset-vsync.c#L670
         ok = drmModeSetCrtc(
             fd, // fd
             // see: https://manpages.debian.org/testing/libdrm-dev/drmModeGetResources.3.en.html
@@ -180,14 +177,51 @@ int main()
             perror("[modesetting] Could not set CRTC mode and framebuffer. drmModeSetCrtc"); // 在x11启动情况下会Permission denied (ctrl+alt+F3 or `sudo service gdm3 stop`)
             continue;
         }
-        printf("  begin sleep...\n");
-        sleep(3); // hold to see
+        printf("  type anything...\n");
+        getchar();
         printf("  done\n");
 
-        //ok = drmSetClientCap(fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
-        //if (ok < 0) {
-        //    perror("[modesetting] Could not set DRM client universal planes capable. drmSetClientCap");
+
+        //// ## Planes信息
+        //drmModePlaneRes *plane_res = drmModeGetPlaneResources(fd);
+        //if (plane_res == NULL) {
+        //    perror("[modesetting] Could not get DRM device planes resources. drmModeGetPlaneResources");
         //    continue;
+        //}
+        //// see: https://github.com/grate-driver/libdrm/blob/master/xf86drmMode.h#L336
+        //printf("  drmModePlaneRes count_planes:%d\n", plane_res->count_planes);
+        //for (int i = 0; i < plane_res->count_planes; i++) {
+        //    drmModePlane *plane = drmModeGetPlane(fd, plane_res->planes[i]);
+        //    if (plane == NULL) {
+        //        perror("[modesetting] Could not get DRM device plane. drmModeGetPlane");
+        //        continue;
+        //    }
+        //    printf("    plane[%d]: crtc_x:%d, crtc_y:%d, x:%d, y:%d\n", i, plane->crtc_x, plane->crtc_y, plane->x, plane->y);
+
+        //    drmModeObjectProperties *props = drmModeObjectGetProperties(fd, plane_res->planes[i], DRM_MODE_OBJECT_PLANE);
+        //    if (props == NULL) {
+        //        perror("[modesetting] Could not get DRM device planes' properties. drmModeObjectGetProperties");
+        //        continue;
+        //    }
+        //    drmModePropertyRes **props_info = calloc(props->count_props, sizeof *props_info);
+        //    if (props_info == NULL) {
+        //        perror("[modesetting] Could not get DRM device planes' properties. drmModeObjectGetProperties");
+        //        continue;
+        //    }
+        //    for (int j = 0; j < props->count_props; j++) {
+        //        props_info[j] = drmModeGetProperty(fd, props->props[j]);
+        //        if (props_info[j] == NULL) {
+        //            perror("[modesetting] Could not get DRM device planes' properties' info. drmModeGetProperty");
+        //            continue;
+        //        }
+        //        // see: https://github.com/grate-driver/libdrm/blob/master/xf86drmMode.h#L234
+        //        //   type value: https://github.com/grate-driver/libdrm/blob/master/xf86drmMode.h#L311
+        //        printf("      props_info[%d]: count_values:%d, name:%s\n", j, props_info[j]->count_values, props_info[j]->name);
+        //        printf("        prop_values[%d]:%lu\n", j, props->prop_values[j]);
+        //        for (int k = 0; k < props_info[j]->count_values; k++) {
+        //            printf("        props_info[%d]->values[%d]:%lu\n", j, k, props_info[j]->values[k]);
+        //        }
+        //    }
         //}
 	}
 }
