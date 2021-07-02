@@ -2,7 +2,7 @@
 cmake_minimum_required(VERSION 3.10.2)
 project(hello_drm LANGUAGES C VERSION "1.0.0")
 
-set(HELLO_DRM_SRC main.c)
+set(HELLO_DRM_SRC main.c modeprint.c)
 add_executable(hello_drm ${HELLO_DRM_SRC})
 
 include(FindPkgConfig)
