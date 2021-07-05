@@ -20,7 +20,7 @@
 // https://github.com/grate-driver/libdrm/blob/master/xf86drmMode.h
 #include <xf86drmMode.h>
 
-static const bool logPlanes = false;
+static const bool logPlanes = true;
 
 int printModule(int argc, char **argv);
 
@@ -45,7 +45,7 @@ void printResource(int fd, drmModeRes *resource) {
         resource->count_fbs, resource->count_crtcs, resource->count_encoders, resource->count_connectors, resource->min_width, resource->max_width, resource->min_height, resource->max_height
     );
 
-    // todo: 似乎不能看到其他app申请的fb？(比如开着gui时，初始依然0）
+    // todo: 似乎不能看到其他app申请的fb？(比如开着gui时，初始依然是0）
     printf("    fbs:");
     // allocated framebuffer objects:
     for (int i = 0; i < resource->count_fbs; ++i) {
@@ -60,7 +60,8 @@ void printResource(int fd, drmModeRes *resource) {
         drmModeCrtcPtr crtc = drmModeGetCrtc(fd, resource->crtcs[i]);
         printf("    crtc[%d]: buffer_id:%d, x:%d, y:%d, w:%d, h:%d, mode_valid:%d, mode->hdisplay:%d, mode->vdisplay:%d, gamma_size:%d\n", 
             i,
-            crtc->buffer_id, // a pointer to some video memory (abstracted as a frame-buffer object)
+            // todo: crtc上似乎能看到其他应用的fb？但ubuntu树莓派双屏幕时，两个crtc的buffer_id相同？
+            crtc->buffer_id, // a pointer to some video memory (abstracted as a frame-buffer object). 0 = disconnect
             crtc->x, crtc->y, crtc->width, crtc->height, crtc->mode_valid, crtc->mode.hdisplay, crtc->mode.vdisplay, crtc->gamma_size
         );
     }
@@ -210,7 +211,9 @@ int main(int argc, char **argv) {
             perror("[modesetting] Could not get DRM device resources. drmModeGetResources");
             continue;
         }
+        printf("------initial resource:------\n");
         printResource(fd, resource);
+        printf("-----------------------------\n");
 
         for (int i_connector = 0; i_connector < resource->count_connectors; i_connector++) {
             // ## get connector
@@ -222,12 +225,16 @@ int main(int argc, char **argv) {
             //drmModeModeInfoPtr selected_mode = &cur_connector->modes[0];
             drmModeModeInfoPtr selected_mode = &cur_connector->modes[cur_connector->count_modes - 1];
             // see: https://github.com/grate-driver/libdrm/blob/master/xf86drmMode.h#L291
-            printf("  connector[%d]: mmWidth:%d, mmHeight:%d, subpixel:%d, count_modes:%d, mode[0].hdisplay:%d, mode[0].vdisplay:%d\n%s\n", 
-                i_connector, cur_connector->mmWidth, cur_connector->mmHeight, cur_connector->subpixel, cur_connector->count_modes, selected_mode->hdisplay, selected_mode->vdisplay,
-                "    drmModeSubPixel:1-UNKNOWN,2-HORIZONTAL_RGB,3-HORIZONTAL_BGR,4-VERTICAL_RGB,5-VERTICAL_BGR,6-NONE"
+            printf("  connector[%d]:%d encoder_id:%d mmWidth:%d, mmHeight:%d, subpixel:%d, count_modes:%d, mode[0].hdisplay:%d, mode[0].vdisplay:%d\n%s\n", 
+                i_connector, cur_connector->connector_id, cur_connector->encoder_id, cur_connector->mmWidth, cur_connector->mmHeight, cur_connector->subpixel, cur_connector->count_modes, selected_mode->hdisplay, selected_mode->vdisplay,
+                "        drmModeSubPixel:1-UNKNOWN,2-HORIZONTAL_RGB,3-HORIZONTAL_BGR,4-VERTICAL_RGB,5-VERTICAL_BGR,6-NONE"
             );
-            for (int i_m = 0; i_m < cur_connector->count_modes; i_m++)
-                printf("    mode[%d]: hdisplay:%d,vdisplay:%d \tname:%s\n", i_m, cur_connector->modes[i_m].hdisplay, cur_connector->modes[i_m].vdisplay, cur_connector->modes[i_m].name);
+            printf("    encoders:");
+            for (int i_encoder = 0; i_encoder < cur_connector->count_encoders; i_encoder++)
+                printf(" %u", cur_connector->encoders[i_encoder]);
+            printf("\n");
+            for (int i_mode = 0; i_mode < cur_connector->count_modes; i_mode++)
+                printf("    mode[%d]: hdisplay:%d,vdisplay:%d \tname:%s\n", i_mode, cur_connector->modes[i_mode].hdisplay, cur_connector->modes[i_mode].vdisplay, cur_connector->modes[i_mode].name);
 
             // ## create dumb buffer
             // see: https://manpages.debian.org/jessie/libdrm-dev/drm-memory.7.en.html#Dumb-Buffers
@@ -267,7 +274,9 @@ int main(int argc, char **argv) {
                 &fb_id
             );
             //printf("after drmModeAddFB\n");
+            printf("------resource after drmModeAddFB:------\n");
             printResource(fd, resource);
+            printf("----------------------------------------\n");
             if (ok < 0) {
                 perror("[compositor] Could not make a DRM FB. drmModeAddFB");
                 continue;
@@ -326,6 +335,9 @@ int main(int argc, char **argv) {
                 1, // count
                 selected_mode // mode. 注意会改变printResource中connector的mode
             );
+            printf("------resource after drmModeSetCrtc:------\n");
+            printResource(fd, resource);
+            printf("------------------------------------------\n");
             if (ok < 0) {
                 perror("[modesetting] Could not set CRTC mode and framebuffer. drmModeSetCrtc"); // 在x11启动情况下会Permission denied (ctrl+alt+F3 or `sudo service gdm3 stop`)
                 // continue;
