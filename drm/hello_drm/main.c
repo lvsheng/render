@@ -222,10 +222,14 @@ int main(int argc, char **argv) {
                 perror("[modesetting] Could not get DRM device connector. drmModeGetConnector");
                 continue;
             }
+            if (cur_connector->count_modes == 0) {
+                printf("[modesetting] cur_connector->count_modes is 0.\n");
+                continue;
+            }
             //drmModeModeInfoPtr selected_mode = &cur_connector->modes[0];
             drmModeModeInfoPtr selected_mode = &cur_connector->modes[cur_connector->count_modes - 1];
             // see: https://github.com/grate-driver/libdrm/blob/master/xf86drmMode.h#L291
-            printf("  connector[%d]:%d encoder_id:%d mmWidth:%d, mmHeight:%d, subpixel:%d, count_modes:%d, mode[0].hdisplay:%d, mode[0].vdisplay:%d\n%s\n", 
+            printf("  connector[%d]:%d encoder_id:%d mmWidth:%d, mmHeight:%d, subpixel:%d, count_modes:%d, selected_mode.hdisplay:%d, selected_mode.vdisplay:%d\n%s\n",
                 i_connector, cur_connector->connector_id, cur_connector->encoder_id, cur_connector->mmWidth, cur_connector->mmHeight, cur_connector->subpixel, cur_connector->count_modes, selected_mode->hdisplay, selected_mode->vdisplay,
                 "        drmModeSubPixel:1-UNKNOWN,2-HORIZONTAL_RGB,3-HORIZONTAL_BGR,4-VERTICAL_RGB,5-VERTICAL_BGR,6-NONE"
             );
