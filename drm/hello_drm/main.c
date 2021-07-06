@@ -22,7 +22,7 @@
 
 static const bool logPlanes = true;
 
-int printModule(int argc, char **argv);
+//int printModule(int argc, char **argv);
 
 void printResource(int fd, drmModeRes *resource) {
     //if (resource == NULL) {
@@ -158,9 +158,9 @@ int main(int argc, char **argv) {
         printf(" %s", *(argv + i));
     }
     printf("\n\n");
-    if (argc > 1) {
-        return printModule(argc, argv);
-    }
+    //if (argc > 1) {
+    //    return printModule(argc, argv);
+    //}
 
     int ok;
     drmDevicePtr devices[64];

@@ -395,8 +395,8 @@ static void args(int argc, char **argv)
     }
 }
 
-//int main(int argc, char **argv)
-int printModule(int argc, char **argv)
+int main(int argc, char **argv)
+//int printModule(int argc, char **argv)
 {
     int fd;
     drmModeResPtr res;
