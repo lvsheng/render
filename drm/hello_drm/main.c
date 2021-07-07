@@ -149,6 +149,80 @@ void printPlanes(int fd) {
     } // for planes
 }
 
+int createFrameBuffer(int fd, int *p_fb_id, uint32_t **p_buffer, struct drm_mode_create_dumb *p_create_req, drmModeModeInfoPtr selected_mode, drmModeRes *resource) {
+    int ok;
+
+    // ## create dumb buffer
+    // see: https://manpages.debian.org/jessie/libdrm-dev/drm-memory.7.en.html#Dumb-Buffers
+    const int bpp = 32;
+    struct drm_mode_create_dumb create_req = {};
+    create_req.width = selected_mode->hdisplay;
+    create_req.height = selected_mode->vdisplay;
+    create_req.bpp = bpp; // bits-per-pixel, must be a multiple of 8
+    //create_req.width = 1024 * 1024 * 110 * 8l / bpp / create_req.height; // Cannot allocate memory (but 215M is ok)
+    ok = ioctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, &create_req);
+    if (ok < 0) {
+        perror("[compositor] Could not create a dumb buffer. ioctl");
+        return ok;
+    }
+    // see: https://manpages.debian.org/jessie/libdrm-dev/drm-memory.7.en.html - drm_mode_create_dumb
+    printf("  drm_mode_create_dumb: handle:%d, pitch:%d, Pixels Per Row:%d, size:%lld\n", 
+        create_req.handle, // gem handle that identifies the buffer
+        // the pitch (or stride) of the new buffer, Most drivers use 32bit or 64bit aligned stride-values.
+        // see also: https://jsandler18.github.io/extra/framebuffer.html - Pitch
+        create_req.pitch, create_req.pitch * 8 / create_req.bpp,
+        create_req.size // the absolute size in bytes of the buffer. This can normally also be computed with (height * pitch + width) * bpp / 4.
+    );
+
+    // ## create framebuffer
+    // see: https://github.com/grate-driver/libdrm/blob/master/xf86drmMode.h#L364
+    //     Creates a new framebuffer with an buffer object as its scanout buffer.
+    // see: https://docs.nvidia.com/drive/nvvib_docs/NVIDIA%20DRIVE%20Linux%20SDK%20Development%20Guide/baggage/group__direct__rendering__manager.html#ga2b6953f6bc86c2fd4851690038b7b52f
+    //     creates a framebuffer with a specified size and format, using the specified buffer object as the memory backing store. The buffer object can be a "dumb buffer" created by a call to drmIoctl with the request parameter set to DRM_IOCTL_MODE_CREATE_DUMB, or it can be a dma-buf imported by a call to the drmPrimeFDToHandle function.
+    uint32_t fb_id;
+    //printf("before drmModeAddFB\n");
+    //printResource(fd, resource);
+    ok = drmModeAddFB(fd, create_req.width, create_req.height, 
+        32, // depth. todo-Q: 与bpp的区别？不一定是8的倍数，可能小于bpp？ 如man的例子中就是24而bpp是32：https://manpages.debian.org/jessie/libdrm-dev/drm-memory.7.en.html
+        create_req.bpp, 
+        create_req.pitch,
+        create_req.handle, // A handle for a buffer object to provide memory backin
+        &fb_id
+    );
+    //printf("after drmModeAddFB\n");
+    printf("------resource after drmModeAddFB:------\n");
+    printResource(fd, resource);
+    printf("----------------------------------------\n");
+    if (ok < 0) {
+        perror("[compositor] Could not make a DRM FB. drmModeAddFB");
+        return ok;
+    }
+
+    // ## retrieve the offset for mmap
+    struct drm_mode_map_dumb map_req = {};
+    map_req.handle = create_req.handle;
+    ok = ioctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &map_req);
+    if (ok < 0) {
+        perror("[compositor] Could not prepare dumb buffer mmap. ioctl");
+        return ok;
+    }
+    printf("  drm_mode_map_dumb: offset:%lld\n", map_req.offset);
+
+    // ## mmap
+    // see: https://en.wikipedia.org/wiki/Mmap
+    uint32_t *buffer;
+    buffer = mmap(0, create_req.size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, map_req.offset);
+    if (buffer == MAP_FAILED) {
+        perror("[compositor] Could not mmap dumb buffer. mmap");
+        return -1;
+    }
+
+    *p_fb_id = fb_id;
+    *p_buffer = buffer;
+    *p_create_req = create_req;
+    return 0;
+}
+
 // see: https://github.com/ardera/flutter-pi/blob/master/src/modesetting.c
 // see also: https://blog.csdn.net/hexiaolong2009/article/details/83721242
 // see also: https://github.com/dvdhrm/docs/tree/master/drm-howto
@@ -240,68 +314,11 @@ int main(int argc, char **argv) {
             for (int i_mode = 0; i_mode < cur_connector->count_modes; i_mode++)
                 printf("    mode[%d]: hdisplay:%d,vdisplay:%d \tname:%s\n", i_mode, cur_connector->modes[i_mode].hdisplay, cur_connector->modes[i_mode].vdisplay, cur_connector->modes[i_mode].name);
 
-            // ## create dumb buffer
-            // see: https://manpages.debian.org/jessie/libdrm-dev/drm-memory.7.en.html#Dumb-Buffers
-            const int bpp = 32;
-            struct drm_mode_create_dumb create_req = {};
-            create_req.width = selected_mode->hdisplay;
-            create_req.height = selected_mode->vdisplay;
-            create_req.bpp = bpp; // bits-per-pixel, must be a multiple of 8
-            //create_req.width = 1024 * 1024 * 110 * 8l / bpp / create_req.height; // Cannot allocate memory (but 215M is ok)
-            ok = ioctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, &create_req);
-            if (ok < 0) {
-                perror("[compositor] Could not create a dumb buffer. ioctl");
-                continue;
-            }
-            // see: https://manpages.debian.org/jessie/libdrm-dev/drm-memory.7.en.html - drm_mode_create_dumb
-            printf("  drm_mode_create_dumb: handle:%d, pitch:%d, Pixels Per Row:%d, size:%lld\n", 
-                create_req.handle, // gem handle that identifies the buffer
-                // the pitch (or stride) of the new buffer, Most drivers use 32bit or 64bit aligned stride-values.
-                // see also: https://jsandler18.github.io/extra/framebuffer.html - Pitch
-                create_req.pitch, create_req.pitch * 8 / create_req.bpp,
-                create_req.size // the absolute size in bytes of the buffer. This can normally also be computed with (height * pitch + width) * bpp / 4.
-            );
-
-            // ## create framebuffer
-            // see: https://github.com/grate-driver/libdrm/blob/master/xf86drmMode.h#L364
-            //     Creates a new framebuffer with an buffer object as its scanout buffer.
-            // see: https://docs.nvidia.com/drive/nvvib_docs/NVIDIA%20DRIVE%20Linux%20SDK%20Development%20Guide/baggage/group__direct__rendering__manager.html#ga2b6953f6bc86c2fd4851690038b7b52f
-            //     creates a framebuffer with a specified size and format, using the specified buffer object as the memory backing store. The buffer object can be a "dumb buffer" created by a call to drmIoctl with the request parameter set to DRM_IOCTL_MODE_CREATE_DUMB, or it can be a dma-buf imported by a call to the drmPrimeFDToHandle function.
-            uint32_t fb_id;
-            //printf("before drmModeAddFB\n");
-            //printResource(fd, resource);
-            ok = drmModeAddFB(fd, create_req.width, create_req.height, 
-                32, // depth. todo-Q: 与bpp的区别？不一定是8的倍数，可能小于bpp？ 如man的例子中就是24而bpp是32：https://manpages.debian.org/jessie/libdrm-dev/drm-memory.7.en.html
-                create_req.bpp, 
-                create_req.pitch,
-                create_req.handle, // A handle for a buffer object to provide memory backin
-                &fb_id
-            );
-            //printf("after drmModeAddFB\n");
-            printf("------resource after drmModeAddFB:------\n");
-            printResource(fd, resource);
-            printf("----------------------------------------\n");
-            if (ok < 0) {
-                perror("[compositor] Could not make a DRM FB. drmModeAddFB");
-                continue;
-            }
-
-            // ## retrieve the offset for mmap
-            struct drm_mode_map_dumb map_req = {};
-            map_req.handle = create_req.handle;
-            ok = ioctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &map_req);
-            if (ok < 0) {
-                perror("[compositor] Could not prepare dumb buffer mmap. ioctl");
-                continue;
-            }
-            printf("  drm_mode_map_dumb: offset:%lld\n", map_req.offset);
-
-            // ## mmap
-            // see: https://en.wikipedia.org/wiki/Mmap
+            int fb_id;
             uint32_t *buffer;
-            buffer = mmap(0, create_req.size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, map_req.offset);
-            if (buffer == MAP_FAILED) {
-                perror("[compositor] Could not mmap dumb buffer. mmap");
+            struct drm_mode_create_dumb create_req;
+            ok = createFrameBuffer(fd, &fb_id, &buffer, &create_req, selected_mode, resource);
+            if (ok < 0) {
                 continue;
             }
 
@@ -331,7 +348,7 @@ int main(int argc, char **argv) {
                 fd, // fd
                 // see: https://manpages.debian.org/testing/libdrm-dev/drmModeGetResources.3.en.html
                 // A CRTC is simply an object that can scan out a framebuffer to a display sink, and contains mode timing and relative position information. CRTCs drive encoders, which are responsible for converting the pixel stream into a specific display protocol (e.g., MIPI or HDMI).
-                resource->crtcs[i_connector], // crtcId
+                resource->crtcs[i_connector], // crtcId。注意仅按顺序选择了相应的crtc，而未正规地找到匹配的encoder所支持的crtc
                 fb_id, // bufferId
                 0, // x
                 0, // y
@@ -356,5 +373,8 @@ int main(int argc, char **argv) {
 
     // 本程序结束后，/dev/fb0的操作也不能及时生效，要ctrl-alt-f2再ctrl-alt-f3才能更新
     // todo: 是没有主动释放资源的原因？
+}
+
+void testVBlank(int fd, uint32_t *fb_id) {
 }
 
